@@ -4,6 +4,21 @@
 
 目标不是阻止 AI Studio 在改完文件后刷新预览，而是阻止 Vite 自己因为 websocket 断线、重连、轮询等原因额外刷新页面。
 
+## 你需要改什么
+
+只需要覆盖或局部修改你项目里的 `vite.config.ts`。
+
+你**不需要**改动：
+
+- `package.json`
+- npm scripts
+- dependencies
+- React 入口文件
+- app 业务源码
+- Google AI Studio Build 设置
+
+这个仓库刻意只保留一个 Vite 配置方案，避免对用户项目造成额外干扰。
+
 ## 问题
 
 在 Google AI Studio Build 的预览控制台里，可能会看到：
@@ -18,7 +33,7 @@
 
 当 dev server 连接断开并恢复时，这个客户端可能会轮询、重连，并触发页面刷新。如果你正在使用预览页面，页面状态会被破坏。
 
-AI Studio 在 AI 修改文件后触发的刷新不属于这里要处理的问题。这个仓库只处理 Vite 自己造成的额外刷新。
+本项目**不试图阻止** Google AI Studio 在 AI 修改文件后触发的预览刷新。它只处理 Vite 自己造成的额外 websocket / polling / reconnect 刷新。
 
 ## 方案
 
@@ -34,9 +49,9 @@ AI Studio 在 AI 修改文件后触发的刷新不属于这里要处理的问题
 
 ## 用法
 
-把本仓库的 `vite.config.ts` 复制到你的 Vite React 项目中。
+把本仓库 `vite.config.ts` 中的 `neutralizeViteClient()` 插件以及相关 `server` 配置复制到你自己的 `vite.config.ts` 中。
 
-`package.json` 可以继续保持 AI Studio 常用的 dev script：
+你现有的 dev script 可以保持不变。例如，AI Studio 常见的脚本不需要改：
 
 ```json
 {
@@ -46,7 +61,7 @@ AI Studio 在 AI 修改文件后触发的刷新不属于这里要处理的问题
 }
 ```
 
-运行：
+继续用原来的方式运行：
 
 ```bash
 npm run dev
@@ -110,3 +125,7 @@ Vite dev 模式下，CSS import 会通过 JavaScript 注入到页面。如果这
 - service worker 更新逻辑
 - AI Studio 平台层预览刷新
 - 应用内部路由或状态重置
+
+## 来源
+
+本仓库源自一次与 ChatGPT 关于 Google AI Studio Build 预览自刷新问题的调试讨论。README 文件和初始代码由 ChatGPT 参与讨论整理，并通过 ChatGPT 辅助的 GitHub 操作提交到本仓库。
