@@ -1,0 +1,29 @@
+{
+  "name": "vite-ai-studio-no-autoreload",
+  "private": false,
+  "version": "0.1.0",
+  "description": "A Vite config workaround for Google AI Studio Build projects that must run vite dev without Vite-driven preview auto-reloads.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "vite",
+    "google-ai-studio",
+    "ai-studio-build",
+    "hmr",
+    "autoreload",
+    "react",
+    "tailwind"
+  ],
+  "scripts": {
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.1.14",
+    "@vitejs/plugin-react": "^5.0.4",
+    "vite": "^6.2.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "typescript": "~5.8.2"
+  }
+}
