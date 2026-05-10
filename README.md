@@ -2,6 +2,21 @@
 
 A focused `vite.config.ts` workaround for Google AI Studio Build projects that must run `vite dev`, but should not let Vite reload the preview page by itself.
 
+## What you need to change
+
+Only replace or patch your project's `vite.config.ts`.
+
+You do **not** need to change:
+
+- `package.json`
+- npm scripts
+- dependencies
+- React entry files
+- app source code
+- Google AI Studio Build settings
+
+This repository is intentionally limited to a single Vite configuration pattern to reduce integration noise.
+
 ## Problem
 
 In Google AI Studio Build, the preview may show Vite client logs like:
@@ -12,9 +27,11 @@ In Google AI Studio Build, the preview may show Vite client logs like:
 [vite] server connection lost. Polling for restart...
 ```
 
-When the Vite dev server connection is lost and recovered, Vite's browser-side client can poll and reload the page. That is disruptive if you are actively using the preview and want to preserve in-page state.
+That means the page is still running Vite's browser-side `/@vite/client` module.
 
-AI Studio may still reload the preview after the agent edits files. This repository does not try to prevent that. It only prevents extra Vite-driven websocket / polling / reconnect reloads.
+When the Vite dev server connection is lost and recovered, that client can poll, reconnect, and reload the page. This is disruptive when you are actively using the preview and want to preserve in-page state.
+
+This project does **not** try to block Google AI Studio's own preview reload after the agent edits files. It only prevents extra Vite-driven websocket / polling / reconnect reloads.
 
 ## Strategy
 
@@ -28,11 +45,11 @@ It:
 - keeps CSS injection working in Vite dev mode through `updateStyle()` and `removeStyle()`
 - keeps Vite file watching enabled so the dev server can invalidate its module graph when files change
 
-## Use
+## Usage
 
-Copy `vite.config.ts` from this repository into your Vite React project.
+Copy the `neutralizeViteClient()` plugin and the related `server` config from this repository's `vite.config.ts` into your own `vite.config.ts`.
 
-Your `package.json` can keep a normal AI Studio-compatible dev script:
+Your existing dev script can stay as-is. For example, this common AI Studio script does not need to change:
 
 ```json
 {
@@ -42,7 +59,7 @@ Your `package.json` can keep a normal AI Studio-compatible dev script:
 }
 ```
 
-Run:
+Run your project the same way you already do:
 
 ```bash
 npm run dev
@@ -106,3 +123,7 @@ If the Vite logs are gone but the page still reloads, the source is probably not
 - service worker update handlers
 - AI Studio platform-level preview reloads
 - app-level navigation resets
+
+## Origin
+
+This repository was created from a debugging discussion with ChatGPT about Google AI Studio Build preview auto-reload behavior. The README files and initial code were discussed with ChatGPT and submitted to this repository through ChatGPT-assisted GitHub actions.
