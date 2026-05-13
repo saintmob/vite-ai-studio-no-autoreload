@@ -2,6 +2,21 @@
 
 A focused `vite.config.ts` workaround for Google AI Studio Build projects that must run `vite dev`, but should not let Vite reload the preview page by itself.
 
+## Local hot reload is preserved
+
+This patch is now environment-gated.
+
+It only activates when one of these environment variables is present:
+
+```text
+DISABLE_HMR=true
+AI_STUDIO_NO_AUTORELOAD=true
+```
+
+In normal local development, if neither variable is set, the patch is not installed and Vite's standard hot reload behavior stays untouched.
+
+This means you can pull the code to your local machine and still use normal Vite HMR.
+
 ## What you need to change
 
 Only replace or patch your project's `vite.config.ts`.
@@ -35,19 +50,20 @@ This project does **not** try to block Google AI Studio's own preview reload aft
 
 ## Strategy
 
-The config keeps `vite dev` running, but replaces the browser-side `/@vite/client` module with a safe no-reload shim.
+The config keeps `vite dev` running, but only in AI Studio patch mode it replaces the browser-side `/@vite/client` module with a safe no-reload shim.
 
 It:
 
 - keeps Google AI Studio Build compatible with `vite dev`
-- disables Vite websocket reconnect / polling / reload behavior
-- disables HMR
+- disables Vite websocket reconnect / polling / reload behavior only in AI Studio patch mode
+- disables HMR only in AI Studio patch mode
 - keeps CSS injection working in Vite dev mode through `updateStyle()` and `removeStyle()`
 - keeps Vite file watching enabled so the dev server can invalidate its module graph when files change
+- leaves local Vite HMR untouched when the AI Studio environment flag is absent
 
 ## Usage
 
-Copy the `neutralizeViteClient()` plugin and the related `server` config from this repository's `vite.config.ts` into your own `vite.config.ts`.
+Copy the `neutralizeViteClient()` plugin, the `enableAiStudioNoAutoreloadPatch` gate, and the related conditional `server` config from this repository's `vite.config.ts` into your own `vite.config.ts`.
 
 Your existing dev script can stay as-is. For example, this common AI Studio script does not need to change:
 
@@ -65,7 +81,29 @@ Run your project the same way you already do:
 npm run dev
 ```
 
-## Expected result
+## Activation rules
+
+The patch activates when:
+
+```text
+DISABLE_HMR=true
+```
+
+or:
+
+```text
+AI_STUDIO_NO_AUTORELOAD=true
+```
+
+It can be explicitly disabled with:
+
+```text
+AI_STUDIO_NO_AUTORELOAD=false
+```
+
+This is useful if AI Studio sets `DISABLE_HMR=true`, but you temporarily want to bypass this patch.
+
+## Expected result in AI Studio
 
 The browser console should no longer show:
 
@@ -77,9 +115,17 @@ The browser console should no longer show:
 
 CSS should still render normally.
 
+## Expected result locally
+
+Without `DISABLE_HMR=true` or `AI_STUDIO_NO_AUTORELOAD=true`, Vite behaves normally:
+
+- `/@vite/client` is not replaced
+- HMR remains enabled
+- local hot reload continues to work
+
 ## Tradeoffs
 
-This intentionally disables Vite's browser-side HMR behavior.
+When the patch is active, it intentionally disables Vite's browser-side HMR behavior.
 
 After AI Studio edits files, rely on AI Studio's own preview reload, or reload the page manually. This is designed for stable interactive preview usage, not for classic local hot-module-reload development.
 
@@ -96,6 +142,21 @@ This was written for a Vite + React + Tailwind setup similar to:
 Other Vite versions may require small changes if Vite adds new exports to `/@vite/client`.
 
 ## Troubleshooting
+
+### Local hot reload stopped working
+
+Check whether your local environment has one of these variables set:
+
+```text
+DISABLE_HMR=true
+AI_STUDIO_NO_AUTORELOAD=true
+```
+
+Unset them, or run with:
+
+```text
+AI_STUDIO_NO_AUTORELOAD=false
+```
 
 ### Error: `/@vite/client` does not provide an export named ...
 
