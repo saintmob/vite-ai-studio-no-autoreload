@@ -4,133 +4,78 @@ import path from 'node:path';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 
 /**
- * Neutralizes Vite's browser-side dev client while keeping CSS injection working.
+ * Adds a browser-side guard for Google AI Studio Build preview sessions.
  *
- * Important:
- * - This strong patch is NOT enabled merely because `DISABLE_HMR=true` exists.
- * - Some hosted preview environments use `DISABLE_HMR=true` as an internal signal,
- *   but still expect parts of Vite's normal startup path to remain available.
- * - Therefore, `DISABLE_HMR=true` only disables Vite HMR.
- * - The stronger `/@vite/client` replacement is enabled only with
- *   `AI_STUDIO_NO_AUTORELOAD=true`.
+ * Detection:
+ * - Auto-enables when both signals are present:
+ *   1. GEMINI_API_KEY exists
+ *   2. DISABLE_HMR=true
  *
- * Local development:
- * - If `DISABLE_HMR` and `AI_STUDIO_NO_AUTORELOAD` are not set, this plugin is
- *   not installed and normal Vite hot updates remain untouched.
+ * Why both:
+ * - GEMINI_API_KEY alone is common in local Gemini projects.
+ * - DISABLE_HMR=true alone may be used by hosted preview systems.
+ * - Together they are a more specific signal for the AI Studio Build template.
+ *
+ * What it does:
+ * - Keeps the real Vite dev client available so AI Studio startup is not broken.
+ * - Prevents Vite's reconnect polling endpoint (`/__vite_ping`) from succeeding
+ *   in the browser, so a temporary server disconnect does not turn into a
+ *   Vite-driven page reload.
+ * - Leaves normal local HMR untouched when the AI Studio signals are absent.
  */
-function neutralizeViteClient(): Plugin {
-  const fakeViteClient = `
-    const noop = () => {};
+function aiStudioNoAutoreloadGuard(): Plugin {
+  const guardScript = `
+    (() => {
+      if (window.__AI_STUDIO_NO_AUTORELOAD_GUARD__) return;
+      window.__AI_STUDIO_NO_AUTORELOAD_GUARD__ = true;
 
-    const sheetsMap = new Map();
-    let lastInsertedStyle;
+      const originalFetch = window.fetch.bind(window);
 
-    export function updateStyle(id, content) {
-      if (typeof document === 'undefined') return;
+      function isVitePing(input) {
+        try {
+          const rawUrl =
+            typeof input === 'string'
+              ? input
+              : input && typeof input === 'object' && 'url' in input
+                ? input.url
+                : '';
 
-      let style = sheetsMap.get(id);
+          const url = new URL(rawUrl, window.location.href);
+          return url.pathname.endsWith('/__vite_ping');
+        } catch {
+          return false;
+        }
+      }
 
-      if (!style) {
-        style = document.createElement('style');
-        style.setAttribute('type', 'text/css');
-        style.setAttribute('data-vite-dev-id', id);
-        style.textContent = content;
-
-        if (!lastInsertedStyle) {
-          document.head.appendChild(style);
-
-          setTimeout(() => {
-            lastInsertedStyle = undefined;
-          }, 0);
-        } else {
-          lastInsertedStyle.insertAdjacentElement('afterend', style);
+      window.fetch = function patchedFetch(input, init) {
+        if (isVitePing(input)) {
+          // Vite calls /__vite_ping while waiting for the dev server to come back.
+          // If the ping succeeds, Vite reloads the page. Keep it pending instead.
+          return new Promise(() => {});
         }
 
-        lastInsertedStyle = style;
-        sheetsMap.set(id, style);
-      } else {
-        style.textContent = content;
-      }
-    }
-
-    export function removeStyle(id) {
-      if (typeof document === 'undefined') return;
-
-      const style = sheetsMap.get(id);
-
-      if (style) {
-        style.remove();
-        sheetsMap.delete(id);
-      }
-
-      document
-        .querySelectorAll('style[data-vite-dev-id]')
-        .forEach((el) => {
-          if (el.getAttribute('data-vite-dev-id') === id) {
-            el.remove();
-          }
-        });
-    }
-
-    const hotContext = {
-      data: {},
-
-      accept() {
-        // CSS modules and React plugin transforms may call import.meta.hot.accept().
-        // It must exist, but it must not subscribe to HMR updates.
-      },
-
-      decline: noop,
-      dispose: noop,
-      prune: noop,
-      invalidate: noop,
-      on: noop,
-      off: noop,
-      send: noop,
-    };
-
-    export function createHotContext() {
-      return hotContext;
-    }
-
-    export function injectQuery(url, queryToInject) {
-      if (!queryToInject) return url;
-      if (url[0] !== '.' && url[0] !== '/') return url;
-
-      const cleanUrl = url.replace(/[?#].*$/, '');
-      const suffix = url.slice(cleanUrl.length);
-
-      if (suffix.startsWith('?')) {
-        return cleanUrl + '?' + queryToInject + '&' + suffix.slice(1);
-      }
-
-      return cleanUrl + '?' + queryToInject + suffix;
-    }
-
-    export const ErrorOverlay = class {
-      constructor() {}
-      close() {}
-    };
-
-    export default {};
+        return originalFetch(input, init);
+      };
+    })();
   `;
 
   return {
-    name: 'neutralize-vite-client-but-keep-css',
+    name: 'ai-studio-no-autoreload-guard',
     apply: 'serve',
     enforce: 'pre',
 
-    configureServer(server) {
-      server.middlewares.use((req, res, next) => {
-        if (req.url?.startsWith('/@vite/client')) {
-          res.statusCode = 200;
-          res.setHeader('Content-Type', 'application/javascript');
-          res.end(fakeViteClient);
-          return;
-        }
-
-        next();
-      });
+    transformIndexHtml: {
+      order: 'pre',
+      handler() {
+        return [
+          {
+            tag: 'script',
+            attrs: { type: 'module' },
+            children: guardScript,
+            injectTo: 'head-prepend',
+          },
+        ];
+      },
     },
   };
 }
@@ -146,6 +91,10 @@ function isFalse(value: unknown): boolean {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
 
+  const hasGeminiApiKey = Boolean(
+    env.GEMINI_API_KEY || process.env.GEMINI_API_KEY,
+  );
+
   const disableHmrRequested =
     isTrue(env.DISABLE_HMR) || isTrue(process.env.DISABLE_HMR);
 
@@ -157,14 +106,17 @@ export default defineConfig(({ mode }) => {
     isFalse(env.AI_STUDIO_NO_AUTORELOAD) ||
     isFalse(process.env.AI_STUDIO_NO_AUTORELOAD);
 
-  const enableAiStudioNoAutoreloadPatch =
-    explicitNoAutoreloadEnabled && !explicitNoAutoreloadDisabled;
+  const autoDetectedAiStudioBuild = hasGeminiApiKey && disableHmrRequested;
 
-  const disableHmr = disableHmrRequested || enableAiStudioNoAutoreloadPatch;
+  const enableAiStudioNoAutoreloadGuard =
+    (autoDetectedAiStudioBuild || explicitNoAutoreloadEnabled) &&
+    !explicitNoAutoreloadDisabled;
+
+  const disableHmr = disableHmrRequested || enableAiStudioNoAutoreloadGuard;
 
   return {
     plugins: [
-      ...(enableAiStudioNoAutoreloadPatch ? [neutralizeViteClient()] : []),
+      ...(enableAiStudioNoAutoreloadGuard ? [aiStudioNoAutoreloadGuard()] : []),
       react(),
       tailwindcss(),
     ],
@@ -186,11 +138,8 @@ export default defineConfig(({ mode }) => {
 
       ...(disableHmr ? { hmr: false } : {}),
 
-      ...(enableAiStudioNoAutoreloadPatch
+      ...(enableAiStudioNoAutoreloadGuard
         ? {
-            // Keep watching enabled so Vite can invalidate its module graph after
-            // files change. The browser-side client is neutralized above, so these
-            // changes will not trigger Vite-driven reloads in the preview page.
             watch: {
               ignored: [
                 '**/.git/**',
