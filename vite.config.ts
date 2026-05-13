@@ -6,21 +6,13 @@ import { defineConfig, loadEnv, type Plugin } from 'vite';
 /**
  * Neutralizes Vite's browser-side dev client while keeping CSS injection working.
  *
- * This plugin is intentionally NOT enabled by default. It is only activated in
- * AI Studio-like environments, detected by `DISABLE_HMR=true`, or when manually
- * opted in with `AI_STUDIO_NO_AUTORELOAD=true`.
- *
- * Why:
- * - Google AI Studio Build must run `vite dev` to start the preview.
- * - Vite's normal `/@vite/client` opens a websocket and may reload the page when
- *   the dev server connection is lost/recovered.
- * - In AI Studio, that can destroy in-preview state while the user is interacting
- *   with the app.
- *
- * What this does when enabled:
- * - Keeps `vite dev`.
- * - Disables HMR/reconnect/polling/full-reload behavior from the browser client.
- * - Preserves dev-mode CSS injection via `updateStyle()` / `removeStyle()`.
+ * Important:
+ * - This strong patch is NOT enabled merely because `DISABLE_HMR=true` exists.
+ * - Some hosted preview environments use `DISABLE_HMR=true` as an internal signal,
+ *   but still expect parts of Vite's normal startup path to remain available.
+ * - Therefore, `DISABLE_HMR=true` only disables Vite HMR.
+ * - The stronger `/@vite/client` replacement is enabled only with
+ *   `AI_STUDIO_NO_AUTORELOAD=true`.
  *
  * Local development:
  * - If `DISABLE_HMR` and `AI_STUDIO_NO_AUTORELOAD` are not set, this plugin is
@@ -143,21 +135,32 @@ function neutralizeViteClient(): Plugin {
   };
 }
 
+function isTrue(value: unknown): boolean {
+  return value === 'true' || value === '1';
+}
+
+function isFalse(value: unknown): boolean {
+  return value === 'false' || value === '0';
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
 
-  const aiStudioLikeEnvironment =
-    env.DISABLE_HMR === 'true' ||
-    process.env.DISABLE_HMR === 'true' ||
-    env.AI_STUDIO_NO_AUTORELOAD === 'true' ||
-    process.env.AI_STUDIO_NO_AUTORELOAD === 'true';
+  const disableHmrRequested =
+    isTrue(env.DISABLE_HMR) || isTrue(process.env.DISABLE_HMR);
 
-  const patchExplicitlyDisabled =
-    env.AI_STUDIO_NO_AUTORELOAD === 'false' ||
-    process.env.AI_STUDIO_NO_AUTORELOAD === 'false';
+  const explicitNoAutoreloadEnabled =
+    isTrue(env.AI_STUDIO_NO_AUTORELOAD) ||
+    isTrue(process.env.AI_STUDIO_NO_AUTORELOAD);
+
+  const explicitNoAutoreloadDisabled =
+    isFalse(env.AI_STUDIO_NO_AUTORELOAD) ||
+    isFalse(process.env.AI_STUDIO_NO_AUTORELOAD);
 
   const enableAiStudioNoAutoreloadPatch =
-    aiStudioLikeEnvironment && !patchExplicitlyDisabled;
+    explicitNoAutoreloadEnabled && !explicitNoAutoreloadDisabled;
+
+  const disableHmr = disableHmrRequested || enableAiStudioNoAutoreloadPatch;
 
   return {
     plugins: [
@@ -181,11 +184,10 @@ export default defineConfig(({ mode }) => {
       port: 3000,
       strictPort: true,
 
+      ...(disableHmr ? { hmr: false } : {}),
+
       ...(enableAiStudioNoAutoreloadPatch
         ? {
-            // Disable real Vite HMR only in the AI Studio patch mode.
-            hmr: false,
-
             // Keep watching enabled so Vite can invalidate its module graph after
             // files change. The browser-side client is neutralized above, so these
             // changes will not trigger Vite-driven reloads in the preview page.
